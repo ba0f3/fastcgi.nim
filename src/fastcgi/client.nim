@@ -150,7 +150,7 @@ proc sendStdin*(s: Socket, payload = "") =
   if s.send(unsafeAddr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
     raise newException(IOError, "unable to send stdin header")
   if payloadLen != 0:
-    if s.send(payload.cstring, payloadLen) != sizeof(payloadLen):
+    if s.send(payload.cstring, payloadLen) != payloadLen:
       raise newException(IOError, "unable to send stdin body")
     header = initHeader(FCGI_STDIN, 0, 0, 0)
     if s.send(unsafeAddr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
