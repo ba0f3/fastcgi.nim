@@ -16,14 +16,22 @@ Usage
 ```nim
 import fastcgi/client
 
-let client = connect("127.0.0.1", 5555)
+# connect to fastcgi server on port 9000
+let client = connect("127.0.0.1", 9000)
+# start fastcgi request
 client.sendBeginRequest()
+# set params
 client.sendParam("SERVER_PORT", "80")
 client.sendParam("SERVER_ADDR", "127.0.0.1")
 client.sendParam("SCRIPT_FILENAME", "/index.php")
 client.sendParam("REQUEST_METHOD", "GET")
+# end set params request
 client.sendParam()
-client.sendStdin()
+# send stdin payload
+client.sendPayload("{'name':'John', 'age':30, 'car':null}")
+# end payload
+client.sendPayload()
+# read response from server
 echo client.readResponse()
 ```
 

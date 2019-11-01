@@ -109,52 +109,49 @@ proc sendParam*(s: Socket, name, value = "") =
     header = initHeader(FCGI_PARAMS, 0, 0, 0)
     if s.send(addr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
       raise newException(IOError, "unable to send end params request")
-    return
-
-  zeroMem(addr paramBuffer, PARAMS_BUFF_MAX_LEN)
-  var length = 0
-  if nameLen < 128:
-    paramBuffer[0] = nameLen.char
-    length = 1
   else:
-    paramBuffer[0] = chr((nameLen shr 24) or 0x80)
-    paramBuffer[1] = chr((nameLen shr 16) and 0xff)
-    paramBuffer[2] = chr((nameLen shr 8) and 0xff)
-    paramBuffer[3] = chr(nameLen and 0xff)
-    length = 4
+    zeroMem(addr paramBuffer, PARAMS_BUFF_MAX_LEN)
+    var length = 0
+    if nameLen < 128:
+      paramBuffer[0] = nameLen.char
+      length = 1
+    else:
+      paramBuffer[0] = chr((nameLen shr 24) or 0x80)
+      paramBuffer[1] = chr((nameLen shr 16) and 0xff)
+      paramBuffer[2] = chr((nameLen shr 8) and 0xff)
+      paramBuffer[3] = chr(nameLen and 0xff)
+      length = 4
 
-  if valueLen < 128:
-    paramBuffer[length] = chr(valueLen)
-    inc(length, 1)
-  else:
-    paramBuffer[length] = chr((valueLen shr 24) or 0x80)
-    paramBuffer[length + 1] = chr((valueLen shr 16) and 0xff)
-    paramBuffer[length + 2] = chr((valueLen shr 8) and 0xff)
-    paramBuffer[length + 3] = chr(valueLen and 0xff)
-    inc(length, 4)
+    if valueLen < 128:
+      paramBuffer[length] = chr(valueLen)
+      inc(length, 1)
+    else:
+      paramBuffer[length] = chr((valueLen shr 24) or 0x80)
+      paramBuffer[length + 1] = chr((valueLen shr 16) and 0xff)
+      paramBuffer[length + 2] = chr((valueLen shr 8) and 0xff)
+      paramBuffer[length + 3] = chr(valueLen and 0xff)
+      inc(length, 4)
 
-  copyMem(addr paramBuffer[length], name.cstring, nameLen)
-  copyMem(addr paramBuffer[length + nameLen], value.cstring, valueLen)
+    copyMem(addr paramBuffer[length], name.cstring, nameLen)
+    copyMem(addr paramBuffer[length + nameLen], value.cstring, valueLen)
 
-  let bodyLen = length + nameLen + valueLen
+    let bodyLen = length + nameLen + valueLen
 
-  header = initHeader(FCGI_PARAMS, 0, bodylen, 0)
-  if s.send(addr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
-    raise newException(IOError, "unable to send param header")
-  if s.send(addr paramBuffer, bodyLen) != bodyLen:
-    raise newException(IOError, "unable to send param body")
+    header = initHeader(FCGI_PARAMS, 0, bodylen, 0)
+    if s.send(addr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
+      raise newException(IOError, "unable to send param header")
+    if s.send(addr paramBuffer, bodyLen) != bodyLen:
+      raise newException(IOError, "unable to send param body")
 
-proc sendStdin*(s: Socket, payload = "") =
+proc sendPayload*(s: Socket, payload = "") =
   let payloadLen = payload.len
   var header = initHeader(FCGI_STDIN, 0, payloadLen, 0)
-  if s.send(unsafeAddr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
+  if s.send(addr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
     raise newException(IOError, "unable to send stdin header")
-  if payloadLen != 0:
+
+  if payloadLen > 0:
     if s.send(payload.cstring, payloadLen) != payloadLen:
       raise newException(IOError, "unable to send stdin body")
-    header = initHeader(FCGI_STDIN, 0, 0, 0)
-    if s.send(unsafeAddr header, FCGI_HEADER_LENGTH) != FCGI_HEADER_LENGTH:
-      raise newException(IOError, "unable to send end stdin request")
 
 proc readResponse*(s: Socket): TaintedString =
   var
@@ -168,7 +165,7 @@ proc readResponse*(s: Socket): TaintedString =
 
     case header.kind
     of FCGI_STDOUT, FCGI_STDERR:
-      let contentLength = int((header.contentLengthB1 shr 8) + header.contentLengthB0)
+      let contentLength = (header.contentLengthB1.int shl 8) + header.contentLengthB0.int
       if contentLength > 0:
         result = newString(contentLength)
         if s.recv(result.cstring, contentLength) != contentLength:
