@@ -7,21 +7,20 @@
 
 import unittest, fastcgi/client
 
-test "correct welcome":
-  # connect to fastcgi server on port 9000
-  let client = connect("127.0.0.1", 9000)
-  # start fastcgi request
-  client.sendBeginRequest()
+test "test client request":
+  # create new instance
+  let client = newFCGICLient("127.0.0.1", 9000)
   # set params
-  client.sendParam("SERVER_PORT", "80")
-  client.sendParam("SERVER_ADDR", "127.0.0.1")
-  client.sendParam("SCRIPT_FILENAME", "/index.php")
-  client.sendParam("REQUEST_METHOD", "GET")
-  # end set params request
-  client.sendParam()
+  client.setParam("SERVER_SOFTWARE", "fastcgi.nim/0.1.0")
+  client.setParams({
+    "SERVER_PORT": "80",
+    "SERVER_ADDR": "127.0.0.1",
+    "SCRIPT_FILENAME": "/index.php",
+    "REQUEST_METHOD": "POST"
+  })
+  # connect to fastcgi server on port 9000
+  client.connect()
   # send stdin payload
-  client.sendPayload("{'name':'John', 'age':30, 'car':null}")
-  # end payload
-  client.sendPayload()
-  # read response from server
-  echo client.readResponse()
+  echo client.sendRequest("{'name':'John', 'age':30, 'car':null}")
+  # close connection
+  client.close()
