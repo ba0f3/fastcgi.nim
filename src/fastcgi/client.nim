@@ -1,4 +1,3 @@
-#import fastcgipkg/submodule
 import net, streams, private/common
 
 
@@ -35,11 +34,7 @@ proc setParam*(client: FCGIClient, name, value = "") =
     header = initHeader(FCGI_PARAMS, 0, 0, 0)
     client.paramBuffer.writeData(addr header, FCGI_HEADER_LENGTH)
   else:
-    var
-      record: array[8, char]
-
     if nameLen < 128:
-      record[0] = nameLen.char
       client.paramBuffer.write(nameLen.char)
     else:
       client.paramBuffer.write(chr((nameLen shr 24) or 0x80))
