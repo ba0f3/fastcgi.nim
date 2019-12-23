@@ -28,6 +28,12 @@ type
     FCGI_GET_VALUES_RESULT
     FCGI_MAX
 
+  ProtocolStatus* = enum
+    FCGI_REQUEST_COMPLETE
+    FCGI_CANT_MPX_CONN
+    FCGI_OVERLOADED
+    FCGI_UNKNOWN_ROLE
+
   Header* = object
     version*: uint8
     kind*: HeaderKind
@@ -83,3 +89,10 @@ proc initBeginRequestBody*(role: int, keepalive: bool): BeginRequestBody =
   result.roleB1 = uint8((role shr 8) and 0xff)
   result.roleB0 = uint8(role and 0xff)
   result.flags = if keepalive: FGCI_KEEP_CONNECTION else: 0
+
+proc initEndRequestBody*(appStatus: int32, status = FCGI_REQUEST_COMPLETE): EndRequestBody =
+  result.appStatusB3 = uint8((appStatus shr 24) and 0xff)
+  result.appStatusB2 = uint8((appStatus shr 16) and 0xff)
+  result.appStatusB1 = uint8((appStatus shr 8) and 0xff)
+  result.appStatusB0 = uint8((appStatus) and 0xff)
+  result.protocolStatus = status.uint8
