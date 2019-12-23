@@ -24,33 +24,33 @@ proc connect*(client: FCGIClient) =
   client.socket.connect(client.host, client.port)
 proc close*(client: FCGIClient) = client.socket.close()
 
-proc setParam*(client: FCGIClient, name, value = "") =
+proc setParam*(client: FCGIClient, name: string, value = "") =
   ## Set param by name-value pair
   let
     nameLen = name.len
     valueLen = value.len
-  var header: Header
+
   if nameLen == 0:
-    header = initHeader(FCGI_PARAMS, 0, 0, 0)
-    client.paramBuffer.writeData(addr header, FCGI_HEADER_LENGTH)
+    return
+
+  if nameLen < 128:
+    client.paramBuffer.write(nameLen.char)
   else:
-    if nameLen < 128:
-      client.paramBuffer.write(nameLen.char)
-    else:
-      client.paramBuffer.write(chr((nameLen shr 24) or 0x80))
-      client.paramBuffer.write(chr((nameLen shr 16) and 0xff))
-      client.paramBuffer.write(chr((nameLen shr 8) and 0xff))
-      client.paramBuffer.write(chr(nameLen and 0xff))
+    client.paramBuffer.write(chr((nameLen shr 24) or 0x80))
+    client.paramBuffer.write(chr((nameLen shr 16) and 0xff))
+    client.paramBuffer.write(chr((nameLen shr 8) and 0xff))
+    client.paramBuffer.write(chr(nameLen and 0xff))
 
-    if valueLen < 128:
-      client.paramBuffer.write(valueLen.char)
-    else:
-      client.paramBuffer.write(chr((valueLen shr 24) or 0x80))
-      client.paramBuffer.write(chr((valueLen shr 16) and 0xff))
-      client.paramBuffer.write(chr((valueLen shr 8) and 0xff))
-      client.paramBuffer.write(chr(valueLen and 0xff))
+  if valueLen < 128:
+    client.paramBuffer.write(valueLen.char)
+  else:
+    client.paramBuffer.write(chr((valueLen shr 24) or 0x80))
+    client.paramBuffer.write(chr((valueLen shr 16) and 0xff))
+    client.paramBuffer.write(chr((valueLen shr 8) and 0xff))
+    client.paramBuffer.write(chr(valueLen and 0xff))
 
-    client.paramBuffer.write(name)
+  client.paramBuffer.write(name)
+  if valueLen > 0:
     client.paramBuffer.write(value)
 
 proc setParams*(client: FCGIClient, params: openarray[tuple[name:  string, value: string]]) =
@@ -101,7 +101,7 @@ proc readResponse(client: FCGIClient): TaintedString =
         result = newString(contentLength)
         if client.socket.recv(result.cstring, contentLength) != contentLength:
           raise newException(IOError, "unable to read response body")
-        if header.paddingLength > 0 and header.paddingLength <= 8:
+        if header.paddingLength > 0'u8 and header.paddingLength <= 8'u8:
           if client.socket.recv(addr padding, header.paddingLength.int) != header.paddingLength.int:
             raise newException(IOError, "unable to read response padding")
     of FCGI_END_REQUEST:
