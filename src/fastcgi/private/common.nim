@@ -6,15 +6,17 @@ const
   FCGI_VERSION_1* = 1
 
   FGCI_KEEP_CONNECTION* = 1
-  FCGI_RESPONDER* = 1
-  FCGI_AUTHORIZER* = 2
-  FCGI_FILTER* = 3
 
   FCGI_MAX_CONNS* = "FCGI_MAX_CONNS"
   FCGI_MAX_REQS* = "FCGI_MAX_REQS"
   FCGI_MPXS_CONNS* = "FCGI_MPXS_CONNS"
 
 type
+  FCGI_ROLE* = enum
+    FCGI_RESPONDER = 1
+    FCGI_AUTHORIZER = 2
+    FCGI_FILTER = 3
+
   HeaderKind* = enum
     FCGI_BEGIN_REQUEST = 1
     FCGI_ABORT_REQUEST
@@ -75,7 +77,7 @@ type
     body*: UnknownTypeBody
 
 
-proc initHeader*(kind: HeaderKind, reqId, contentLength, paddingLenth: int): Header =
+proc initHeader*(kind: HeaderKind, reqId: uint16, contentLength, paddingLenth: int): Header =
   result.version = FCGI_VERSION_1
   result.kind = kind
   result.requestIdB1 = uint8((reqId shr 8) and 0xff)
@@ -85,9 +87,9 @@ proc initHeader*(kind: HeaderKind, reqId, contentLength, paddingLenth: int): Hea
   result.paddingLength = paddingLenth.uint8
   result.reserved = 0
 
-proc initBeginRequestBody*(role: int, keepalive: bool): BeginRequestBody =
-  result.roleB1 = uint8((role shr 8) and 0xff)
-  result.roleB0 = uint8(role and 0xff)
+proc initBeginRequestBody*(role: FCGI_ROLE, keepalive: bool): BeginRequestBody =
+  result.roleB1 = uint8((role.int shr 8) and 0xff)
+  result.roleB0 = uint8(role.int and 0xff)
   result.flags = if keepalive: FGCI_KEEP_CONNECTION else: 0
 
 proc initEndRequestBody*(appStatus: int32, status = FCGI_REQUEST_COMPLETE): EndRequestBody =

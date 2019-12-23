@@ -64,7 +64,7 @@ proc clearParams*(client: FCGIClient) =
 
 proc sendBeginRequest(client: FCGIClient) =
   var record: BeginRequestRecord
-  record.header = initHeader(FCGI_BEGIN_REQUEST, 0, sizeof(record.body), 0)
+  record.header = initHeader(FCGI_BEGIN_REQUEST, 0, sizeof(BeginRequestBody), 0)
   record.body = initBeginRequestBody(FCGI_RESPONDER, client.isKeepalive)
   if client.socket.send(addr record, sizeof(record)) != sizeof(record):
     raise newException(IOError, "unable to send begin request")
