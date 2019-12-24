@@ -1,39 +1,55 @@
-import  asyncnet, asyncdispatch, httpcore, private/common, strutils, strformat
-
-const
-  DEFAULT_PORT = Port(9009)
+import  asyncnet, asyncdispatch, httpcore, strutils, strformat, tables, os
+import private/common
 
 type
-  AsyncFCGIServer* = ref object
-    socket: AsyncSocket
-    reuseAddr: bool
-    reusePort: bool
+  RequestHandler* = ref object of RootObj
 
-  ReadParamState = enum
+  AsyncFCGIServer* = ref object
+    socket*: AsyncSocket
+    reuseAddr*: bool
+    reusePort*: bool
+    allowedIps*: seq[string]
+    handlers: Table[string, RequestHandler]
+
+  ReadParamState* = enum
     READ_NAME_LEN
     READ_VALUE_LEN
     READ_NAME_DATA
     READ_VALUE_DATA
+    READ_FINISH
 
   Request* = object
-    keepAlive*: uint8
     id*: uint16
-    dataLen*: uint16
+    keepAlive*: uint8
+    reqMethod*: HttpMethod
     client*: AsyncSocket
     headers*: HttpHeaders
+    body*: string
 
+const
+  DEFAULT_PORT = Port(9009)
+  FCGI_WEB_SERVER_ADDRS = "FCGI_WEB_SERVER_ADDRS"
 
-
+method process*(e: RequestHandler, req: Request): Future[void] {.base.} =
+  raise newException(CatchableError, "Method without implementation override")
 
 proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
   ## Creates a new ``AsyncFCGIServer`` instance.
   new result
   result.reuseAddr = reuseAddr
   result.reusePort = reusePort
+  result.handlers = initTable[string, RequestHandler]()
 
-proc getParams(buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int): HttpHeaders =
-  result = newHttpHeaders()
+  let fwsa = getEnv(FCGI_WEB_SERVER_ADDRS, "")
+  if fwsa.len > 0:
+    for add in fwsa.split(','):
+      result.allowedIps.add(add.strip())
 
+proc initRequest(): Request =
+  result.keepAlive = 0
+  result.headers = newHttpHeaders()
+
+proc getParams(req: Request, buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int) =
   var
     pos = 0
     nameLen: uint32
@@ -47,7 +63,7 @@ proc getParams(buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int): HttpH
     of READ_NAME_LEN:
       nameLen = buffer[pos].uint32
       if nameLen == 0x80:
-        nameLen = nameLen shl 24 + buffer[pos + 1].uint8
+        nameLen = (nameLen and 0x7f) shl 24 + buffer[pos + 1].uint8
         nameLen = nameLen shl 16 + buffer[pos + 2].uint8
         nameLen = nameLen shl 8 + buffer[pos + 3].uint8
         inc(pos, 4)
@@ -57,7 +73,7 @@ proc getParams(buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int): HttpH
     of READ_VALUE_LEN:
       valueLen = buffer[pos].uint32
       if valueLen == 0x80:
-        valueLen = valueLen shl 24 + buffer[pos + 1].uint8
+        valueLen = (valueLen and 0x7f) shl 24 + buffer[pos + 1].uint8
         valueLen = valueLen shl 16 + buffer[pos + 2].uint8
         valueLen = valueLen shl 8 + buffer[pos + 3].uint8
         inc(pos, 4)
@@ -72,9 +88,12 @@ proc getParams(buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int): HttpH
     of READ_VALUE_DATA:
       value = newString(valueLen)
       copyMem(value.cstring, addr buffer[pos], valueLen)
-      result.add(name, value)
       inc(pos, valueLen.int)
+      state = READ_FINISH
+    of READ_FINISH:
       state = READ_NAME_LEN
+      echo &"{name} = {value}"
+      req.headers.add(name, value)
 
 proc sendEnd*(req: Request, appStatus: int32 = 0, status = FCGI_REQUEST_COMPLETE) {.async.} =
   var record: EndRequestRecord
@@ -82,13 +101,13 @@ proc sendEnd*(req: Request, appStatus: int32 = 0, status = FCGI_REQUEST_COMPLETE
   record.body = initEndRequestBody(appStatus, status)
   await req.client.send(addr record, sizeof(record))
 
-proc respond*(req: Request, content: string, headers: HttpHeaders = nil, appStatus: int32 = 0) {.async.} =
+proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus: int32 = 0) {.async.} =
   var payload = ""
   if headers != nil:
     for name, value in headers.pairs:
       payload.add(&"{name}: {value}\c\L")
   else:
-    payload.add(&"Content-Type: text/plain\c\L")
+    payload.add("content-type: text/plain\c\L")
   if content.len > 0:
     payload.add(&"\c\L{content}")
 
@@ -105,14 +124,26 @@ proc respond*(req: Request, content: string, headers: HttpHeaders = nil, appStat
   if req.keepAlive == 0:
     req.client.close()
 
+proc addHandler*(server: AsyncFCGIServer, path: string, handler: RequestHandler) =
+  server.handlers[path] = handler
+
+proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
+  let uri = req.headers["REQUEST_URI"]
+  if server.handlers.hasKey(uri):
+    await server.handlers[uri].process(req)
+  else:
+    var headers = newHttpHeaders()
+    headers.add("status", "404 not found")
+    headers.add("content-type", "text/plain")
+    await req.respond("404 Not Found", headers, appStatus=404)
+
 proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string) {.async.} =
   var
-    req: Request
+    req = initRequest()
     readLen = 0
     header: Header
     buffer: array[FCGI_MAX_LENGTH + 8, char]
     length: int
-    dataLen: int
     payloadLen: int
 
   while not client.isClosed:
@@ -137,25 +168,27 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
 
     of FCGI_PARAMS:
       readLen = await client.recvInto(addr buffer, payloadLen)
-      if readLen != payloadLen:
-        return
-
+      if readLen != payloadLen: return
       if length != 0:
-        req.headers = getParams(addr buffer, length)
-
+        req.getParams(addr buffer, length)
     of FCGI_STDIN:
       readLen = await client.recvInto(addr buffer, payloadLen)
-      if readLen != payloadLen:
-        client.close()
+      if readLen != payloadLen: return
       if length != 0:
-        dataLen = length
-        echo buffer[0..<length].join()
+        req.body.setLen(length)
+        copyMem(req.body.cstring, addr buffer, length)
       else:
-        await req.respond("hello world")
+        await server.processRequest(req)
     else:
       return
   #else:
   #  await server.response(client, "\c\LNot Implemented")
+
+proc checkRemoteAddrs(server: AsyncFCGIServer, client: AsyncSocket): bool =
+  if server.allowedIps.len > 0:
+    let (remote, _) = client.getPeerAddr()
+    return remote in server.allowedIps
+  return true
 
 proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = "") {.async.} =
   ## Starts the process of listening for incoming TCP connections
@@ -169,7 +202,11 @@ proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = "") {.async.
 
   while true:
     var (address, client) = await server.socket.acceptAddr()
-    asyncCheck processClient(server, client, address)
+
+    if server.checkRemoteAddrs(client):
+      asyncCheck processClient(server, client, address)
+    else:
+      client.close()
 
 proc close*(server: AsyncFCGIServer) =
   ## Terminates the async http server instance.
