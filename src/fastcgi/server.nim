@@ -86,9 +86,11 @@ proc respond*(req: Request, content: string, headers: HttpHeaders = nil, appStat
   var payload = ""
   if headers != nil:
     for name, value in headers.pairs:
-      payload.add(fmt"{name}: {value}\c\L")
+      payload.add(&"{name}: {value}\c\L")
+  else:
+    payload.add(&"Content-Type: text/plain\c\L")
   if content.len > 0:
-    payload.add(fmt"\c\L{content}")
+    payload.add(&"\c\L{content}")
 
   var header = initHeader(FCGI_STDOUT, req.id, payload.len, 0)
   await req.client.send(addr header, FCGI_HEADER_LENGTH)
@@ -98,7 +100,7 @@ proc respond*(req: Request, content: string, headers: HttpHeaders = nil, appStat
     header.contentLengthB0 = 0
     await req.client.send(addr header, FCGI_HEADER_LENGTH)
 
-  await req.sendEnd(0)
+  await req.sendEnd()
 
   if req.keepAlive == 0:
     req.client.close()
@@ -117,9 +119,8 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
     readLen = await client.recvInto(addr header, sizeof(Header))
     if readLen != sizeof(Header) or header.version.ord < FCGI_VERSION_1:
       return
-    echo header
 
-    length = (header.contentLengthB1.int16 shl 8) or header.contentLengthB0.int8
+    length = (header.contentLengthB1.int16 shl 8) + header.contentLengthB0.int16
     payloadLen = length + header.paddingLength.int8
 
     if payloadLen > FCGI_MAX_LENGTH:
@@ -151,7 +152,6 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
         echo buffer[0..<length].join()
       else:
         await req.respond("hello world")
-        break
     else:
       return
   #else:
