@@ -1,5 +1,6 @@
 import  asyncnet, asyncdispatch, httpcore, strutils, strformat, tables, os
 import private/common
+export httpcore
 
 type
   RequestHandler* = ref object of RootObj
@@ -22,6 +23,7 @@ type
     id*: uint16
     keepAlive*: uint8
     reqMethod*: HttpMethod
+    reqUri*: string
     client*: AsyncSocket
     headers*: HttpHeaders
     body*: string
@@ -49,7 +51,7 @@ proc initRequest(): Request =
   result.keepAlive = 0
   result.headers = newHttpHeaders()
 
-proc getParams(req: Request, buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int) =
+proc getParams(req: var Request, buffer: ptr array[FCGI_MAX_LENGTH + 8, char], length: int) =
   var
     pos = 0
     nameLen: uint32
@@ -93,6 +95,24 @@ proc getParams(req: Request, buffer: ptr array[FCGI_MAX_LENGTH + 8, char], lengt
     of READ_FINISH:
       state = READ_NAME_LEN
       echo &"{name} = {value}"
+      case name
+      of "REQUEST_METHOD":
+        case value
+        of "GET": req.reqMethod = HttpGet
+        of "POST": req.reqMethod = HttpPost
+        of "HEAD": req.reqMethod = HttpHead
+        of "PUT": req.reqMethod = HttpPut
+        of "DELETE": req.reqMethod = HttpDelete
+        of "PATCH": req.reqMethod = HttpPatch
+        of "OPTIONS": req.reqMethod = HttpOptions
+        of "CONNECT": req.reqMethod = HttpConnect
+        of "TRACE": req.reqMethod = HttpTrace
+        else:
+          raise newException(IOError, "400 bad request")
+      of "REQUEST_URI":
+        req.reqUri = value
+      else:
+        discard
       req.headers.add(name, value)
 
 proc sendEnd*(req: Request, appStatus: int32 = 0, status = FCGI_REQUEST_COMPLETE) {.async.} =
@@ -128,9 +148,8 @@ proc addHandler*(server: AsyncFCGIServer, path: string, handler: RequestHandler)
   server.handlers[path] = handler
 
 proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
-  let uri = req.headers["REQUEST_URI"]
-  if server.handlers.hasKey(uri):
-    await server.handlers[uri].process(req)
+  if server.handlers.hasKey(req.reqUri):
+    await server.handlers[req.reqUri].process(req)
   else:
     var headers = newHttpHeaders()
     headers.add("status", "404 not found")
@@ -161,11 +180,12 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
     req.id = (header.requestIdB1.uint16 shl 8) + header.requestIdB0
 
     case header.kind
+    of FCGI_GET_VALUES:
+      echo "get value"
     of FCGI_BEGIN_REQUEST:
       readLen = await client.recvInto(addr buffer, payloadLen)
       let begin = cast[ptr BeginRequestBody](addr buffer)
       req.keepAlive = begin.flags and FGCI_KEEP_CONNECTION
-
     of FCGI_PARAMS:
       readLen = await client.recvInto(addr buffer, payloadLen)
       if readLen != payloadLen: return
