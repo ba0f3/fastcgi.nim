@@ -1,16 +1,18 @@
-import  asyncnet, asyncdispatch, httpcore, strutils, strformat, tables, os
+import  asyncnet, asyncdispatch, httpcore, strutils, strformat, os
 import private/common
 export httpcore
 
 type
+
   RequestHandler* = ref object of RootObj
+    reqUri: string
 
   AsyncFCGIServer* = ref object
     socket*: AsyncSocket
     reuseAddr*: bool
     reusePort*: bool
     allowedIps*: seq[string]
-    handlers: Table[string, RequestHandler]
+    handlers: seq[RequestHandler]
 
   ReadParamState* = enum
     READ_NAME_LEN
@@ -40,7 +42,6 @@ proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
   new result
   result.reuseAddr = reuseAddr
   result.reusePort = reusePort
-  result.handlers = initTable[string, RequestHandler]()
 
   let fwsa = getEnv(FCGI_WEB_SERVER_ADDRS, "")
   if fwsa.len > 0:
@@ -94,7 +95,6 @@ proc getParams(req: var Request, buffer: ptr array[FCGI_MAX_LENGTH + 8, char], l
       state = READ_FINISH
     of READ_FINISH:
       state = READ_NAME_LEN
-      echo &"{name} = {value}"
       case name
       of "REQUEST_METHOD":
         case value
@@ -144,17 +144,23 @@ proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus:
   if req.keepAlive == 0:
     req.client.close()
 
-proc addHandler*(server: AsyncFCGIServer, path: string, handler: RequestHandler) =
-  server.handlers[path] = handler
+proc addHandler*(server: AsyncFCGIServer, reqUri: string, handler: RequestHandler) =
+  handler.reqUri = reqUri
+  server.handlers.add(handler)
 
 proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
-  if server.handlers.hasKey(req.reqUri):
-    await server.handlers[req.reqUri].process(req)
-  else:
-    var headers = newHttpHeaders()
-    headers.add("status", "404 not found")
-    headers.add("content-type", "text/plain")
-    await req.respond("404 Not Found", headers, appStatus=404)
+  for handler in server.handlers:
+    if handler.reqUri[^1] == '*' and req.reqUri.startsWith(handler.reqUri[0..^2]):
+      await handler.process(req)
+      return
+    elif req.reqUri == handler.reqUri:
+      await handler.process(req)
+      return
+
+  var headers = newHttpHeaders()
+  headers.add("status", "404 not found")
+  headers.add("content-type", "text/plain")
+  await req.respond("404 Not Found", headers, appStatus=404)
 
 proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string) {.async.} =
   var
