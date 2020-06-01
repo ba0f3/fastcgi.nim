@@ -170,8 +170,8 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
     if readLen != sizeof(Header) or header.version.ord < FCGI_VERSION_1:
       return
 
-    length = (header.contentLengthB1.int16 shl 8) + header.contentLengthB0.int16
-    payloadLen = length + header.paddingLength.int8
+    length = (header.contentLengthB1.int shl 8) + header.contentLengthB0.int
+    payloadLen = length + header.paddingLength.int
 
     if payloadLen > FCGI_MAX_LENGTH:
       return
