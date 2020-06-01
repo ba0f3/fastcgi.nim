@@ -201,8 +201,9 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
       readLen = await client.recvInto(addr buffer, payloadLen)
       if readLen != payloadLen: return
       if length != 0:
-        req.body.setLen(length)
-        copyMem(req.body.cstring, addr buffer, length)
+        var chunk = newString(length)
+        copyMem(chunk.cstring, addr buffer, length)
+        req.body.add(chunk)
       else:
         await server.processRequest(req)
     else:
