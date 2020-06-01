@@ -34,7 +34,7 @@ const
   DEFAULT_PORT = Port(9009)
   FCGI_WEB_SERVER_ADDRS = "FCGI_WEB_SERVER_ADDRS"
 
-method process*(e: RequestHandler, req: Request): Future[void] {.base.} =
+method process*(e: RequestHandler, req: Request): Future[void] {.base, locks: "unknown".} =
   raise newException(CatchableError, "Method without implementation override")
 
 proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
