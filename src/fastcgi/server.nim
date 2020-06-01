@@ -1,3 +1,27 @@
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## Basic usage
+## ===========
+##
+## This example will create an FastCGI server on port 9000. The server will
+## respond to all requests with a ``200 OK`` response code and "Hello World"
+## as the response body.
+##
+## .. code-block::nim
+##    import fastcgi/server, asyncdispatch
+##
+##    proc cb(req: Request) {.async.} =
+##      var headers = newHttpHeaders()
+##      headers.add("status", "200 OK")
+##      headers.add("content-type", "text/plain; charset=utf-8")
+##    await req.respond("Hello World", headers)
+##
+##    let server = newAsyncFCGIServer()
+##    waitFor server.serve(Port(9000), cb)
+
 import  asyncnet, asyncdispatch, httpcore, strutils, strformat, tables, os
 import private/common
 export httpcore
@@ -32,8 +56,8 @@ const
   DEFAULT_PORT = Port(9009)
   FCGI_WEB_SERVER_ADDRS = "FCGI_WEB_SERVER_ADDRS"
 
-method process*(e: RequestHandler, req: Request): Future[void] {.base.} =
-  raise newException(CatchableError, "Method without implementation override")
+# method process*(e: RequestHandler, req: Request): Future[void] {.base.} =
+#   raise newException(CatchableError, "Method without implementation override")
 
 proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
   ## Creates a new ``AsyncFCGIServer`` instance.
@@ -144,19 +168,23 @@ proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus:
   if req.keepAlive == 0:
     req.client.close()
 
-proc addHandler*(server: AsyncFCGIServer, path: string, handler: RequestHandler) =
-  server.handlers[path] = handler
+# proc addHandler*(server: AsyncFCGIServer, path: string, handler: RequestHandler) =
+#   server.handlers[path] = handler
 
-proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
-  if server.handlers.hasKey(req.reqUri):
-    await server.handlers[req.reqUri].process(req)
-  else:
-    var headers = newHttpHeaders()
-    headers.add("status", "404 not found")
-    headers.add("content-type", "text/plain")
-    await req.respond("404 Not Found", headers, appStatus=404)
+# proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
+#   if server.handlers.hasKey(req.reqUri):
+#     await server.handlers[req.reqUri].process(req)
+#   else:
+#     var headers = newHttpHeaders()
+#     headers.add("status", "404 not found")
+#     headers.add("content-type", "text/plain")
+#     await req.respond("404 Not Found", headers, appStatus=404)
 
-proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string) {.async.} =
+proc processClient(
+  server: AsyncFCGIServer,
+  client: AsyncSocket,
+  address: string,
+  callback: proc (request: Request): Future[void] {.closure, gcsafe.}) {.async.} =
   var
     req = initRequest()
     readLen = 0
@@ -195,10 +223,15 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
       readLen = await client.recvInto(addr buffer, payloadLen)
       if readLen != payloadLen: return
       if length != 0:
-        req.body.setLen(length)
-        copyMem(req.body.cstring, addr buffer, length)
+        # req.body.setLen(length)
+        # copyMem(req.body.cstring, addr buffer, length)
+        var bodyPart: string
+        bodyPart.setLen(length)
+        copyMem(bodyPart.cstring, addr buffer, length)
+        req.body.add(bodyPart)
       else:
-        await server.processRequest(req)
+        # await server.processRequest(req)
+        await callback(req)
     else:
       return
   #else:
@@ -210,7 +243,11 @@ proc checkRemoteAddrs(server: AsyncFCGIServer, client: AsyncSocket): bool =
     return remote in server.allowedIps
   return true
 
-proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = "") {.async.} =
+proc serve*(
+  server: AsyncFCGIServer,
+  port = DEFAULT_PORT,
+  callback: proc (request: Request): Future[void] {.closure, gcsafe.},
+  address = "") {.async.} =
   ## Starts the process of listening for incoming TCP connections
   server.socket = newAsyncSocket()
   if server.reuseAddr:
@@ -224,7 +261,7 @@ proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = "") {.async.
     var (address, client) = await server.socket.acceptAddr()
 
     if server.checkRemoteAddrs(client):
-      asyncCheck processClient(server, client, address)
+      asyncCheck processClient(server, client, address, callback)
     else:
       client.close()
 
@@ -234,4 +271,8 @@ proc close*(server: AsyncFCGIServer) =
 
 when isMainModule:
   let server = newAsyncFCGIServer()
-  waitFor server.serve(Port(9000))
+  proc cb(req: Request) {.async.} =
+    var headers = newHttpHeaders()
+    headers.add("status", "200 OK")
+    headers.add("content-type", "text/plain; charset=utf-8")
+  waitFor server.serve(Port(9000), cb)
