@@ -48,7 +48,6 @@ method onData*(e: StreamHandler, data: string): Future[void] {.base, locks: "unk
 method endRequest*(e: StreamHandler): Future[void] {.base, locks: "unknown".} =
   raise newException(CatchableError, "Method without implementation override")
 
-
 proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
   ## Creates a new ``AsyncFCGIServer`` instance.
   new result
@@ -156,11 +155,17 @@ proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus:
   if req.keepAlive == 0:
     req.client.close()
 
+proc close*(req: Request) =
+  try:
+    req.client.close()
+  except:
+    discard
+
 proc addHandler*(server: AsyncFCGIServer, reqUri: string, handler: RequestHandler) =
   handler.reqUri = reqUri
   server.handlers.add(handler)
 
-proc findHandler*(server: AsyncFCGIServer, reqUri: string): RequestHandler =
+proc findHandler(server: AsyncFCGIServer, reqUri: string): RequestHandler =
   result = nil
   for handler in server.handlers:
     if handler.reqUri[^1] == '*' and reqUri.startsWith(handler.reqUri[0..^2]):
@@ -204,7 +209,7 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
       if length != 0:
         req.getParams(addr buffer, length)
         let handler = server.findHandler(req.reqUri)
-        if handler != nil and handler of StreamHandler:
+        if handler of StreamHandler:
           await StreamHandler(handler).beginRequest(req)
     of FCGI_STDIN:
       readLen = await client.recvInto(addr buffer, payloadLen)
@@ -213,21 +218,20 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
       if length != 0:
         var chunk = newString(length)
         copyMem(chunk.cstring, addr buffer, length)
-
-        if handler != nil and handler of StreamHandler:
+        if handler of StreamHandler:
           await StreamHandler(handler).onData(chunk)
         else:
           req.body.add(chunk)
       else:
-        if handler != nil:
-          if handler of StreamHandler:
-            await StreamHandler(handler).endRequest()
-          else:
+        if handler of StreamHandler:
+          await StreamHandler(handler).endRequest()
+        elif handler != nil:
             await handler.process(req)
         else:
-          var headers = newHttpHeaders()
-          headers.add("status", "404 not found")
-          headers.add("content-type", "text/plain")
+          let headers = newHttpHeaders([
+            ("status", "404 not found"),
+            ("content-type", "text/plain")
+          ])
           await req.respond("404 Not Found", headers, appStatus=404)
     else:
       return
