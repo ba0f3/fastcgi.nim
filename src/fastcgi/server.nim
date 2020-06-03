@@ -7,6 +7,8 @@ type
   RequestHandler* = ref object of RootObj
     reqUri: string
 
+  StreamHandler* = ref object of RequestHandler
+
   AsyncFCGIServer* = ref object
     socket*: AsyncSocket
     reuseAddr*: bool
@@ -36,6 +38,16 @@ const
 
 method process*(e: RequestHandler, req: Request): Future[void] {.base, locks: "unknown".} =
   raise newException(CatchableError, "Method without implementation override")
+
+method beginRequest*(e: StreamHandler, req: Request): Future[void] {.base, locks: "unknown".} =
+  raise newException(CatchableError, "Method without implementation override")
+
+method onData*(e: StreamHandler, data: string): Future[void] {.base, locks: "unknown".} =
+  raise newException(CatchableError, "Method without implementation override")
+
+method endRequest*(e: StreamHandler): Future[void] {.base, locks: "unknown".} =
+  raise newException(CatchableError, "Method without implementation override")
+
 
 proc newAsyncFCGIServer*(reuseAddr = true, reusePort = false): AsyncFCGIServer =
   ## Creates a new ``AsyncFCGIServer`` instance.
@@ -148,19 +160,13 @@ proc addHandler*(server: AsyncFCGIServer, reqUri: string, handler: RequestHandle
   handler.reqUri = reqUri
   server.handlers.add(handler)
 
-proc processRequest(server: AsyncFCGIServer, req: Request) {.async.} =
+proc findHandler*(server: AsyncFCGIServer, reqUri: string): RequestHandler =
+  result = nil
   for handler in server.handlers:
-    if handler.reqUri[^1] == '*' and req.reqUri.startsWith(handler.reqUri[0..^2]):
-      await handler.process(req)
-      return
-    elif req.reqUri == handler.reqUri:
-      await handler.process(req)
-      return
-
-  var headers = newHttpHeaders()
-  headers.add("status", "404 not found")
-  headers.add("content-type", "text/plain")
-  await req.respond("404 Not Found", headers, appStatus=404)
+    if handler.reqUri[^1] == '*' and reqUri.startsWith(handler.reqUri[0..^2]):
+      result = handler
+    elif reqUri == handler.reqUri:
+      result = handler
 
 proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string) {.async.} =
   var
@@ -176,7 +182,7 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
     if readLen != sizeof(Header) or header.version.ord < FCGI_VERSION_1:
       return
 
-    length = (header.contentLengthB1.int shl 8) + header.contentLengthB0.int
+    length = (header.contentLengthB1.int shl 8) or header.contentLengthB0.int
     payloadLen = length + header.paddingLength.int
 
     if payloadLen > FCGI_MAX_LENGTH:
@@ -197,15 +203,32 @@ proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string
       if readLen != payloadLen: return
       if length != 0:
         req.getParams(addr buffer, length)
+        let handler = server.findHandler(req.reqUri)
+        if handler != nil and handler of StreamHandler:
+          await StreamHandler(handler).beginRequest(req)
     of FCGI_STDIN:
       readLen = await client.recvInto(addr buffer, payloadLen)
       if readLen != payloadLen: return
+      let handler = server.findHandler(req.reqUri)
       if length != 0:
         var chunk = newString(length)
         copyMem(chunk.cstring, addr buffer, length)
-        req.body.add(chunk)
+
+        if handler != nil and handler of StreamHandler:
+          await StreamHandler(handler).onData(chunk)
+        else:
+          req.body.add(chunk)
       else:
-        await server.processRequest(req)
+        if handler != nil:
+          if handler of StreamHandler:
+            await StreamHandler(handler).endRequest()
+          else:
+            await handler.process(req)
+        else:
+          var headers = newHttpHeaders()
+          headers.add("status", "404 not found")
+          headers.add("content-type", "text/plain")
+          await req.respond("404 Not Found", headers, appStatus=404)
     else:
       return
   #else:
