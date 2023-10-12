@@ -1,4 +1,5 @@
 import  asyncnet, asyncdispatch, httpcore, strutils, strformat, os
+from std/nativesockets import AF_UNIX, SOCK_STREAM, Protocol
 import private/common
 export httpcore
 
@@ -173,7 +174,7 @@ proc findHandler(server: AsyncFCGIServer, reqUri: string): RequestHandler =
     elif reqUri == handler.reqUri:
       result = handler
 
-proc processClient(server: AsyncFCGIServer, client: AsyncSocket, address: string) {.async.} =
+proc processClient(server: AsyncFCGIServer, client: AsyncSocket) {.async.} =
   var
     req = initRequest()
     readLen = 0
@@ -244,23 +245,38 @@ proc checkRemoteAddrs(server: AsyncFCGIServer, client: AsyncSocket): bool =
     return remote in server.allowedIps
   return true
 
-proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = "") {.async.} =
-  ## Starts the process of listening for incoming TCP connections
-  server.socket = newAsyncSocket()
-  if server.reuseAddr:
-    server.socket.setSockOpt(OptReuseAddr, true)
-  if server.reusePort:
-    server.socket.setSockOpt(OptReusePort, true)
-  server.socket.bindAddr(port, address)
-  server.socket.listen()
-
+proc serve(server: AsyncFCGIServer; sock: AsyncSocket) {.async.} =
+  assert server.socket == AsyncSocket.default
+  server.socket = sock
   while true:
-    var (address, client) = await server.socket.acceptAddr()
+    var client = await server.socket.accept()
 
     if server.checkRemoteAddrs(client):
-      asyncCheck processClient(server, client, address)
+      asyncCheck processClient(server, client)
     else:
       client.close()
+
+proc serve*(server: AsyncFCGIServer, port = DEFAULT_PORT, address = ""): Future[void] =
+  ## Starts the process of listening for incoming TCP connections
+  var socket = newAsyncSocket()
+  if server.reuseAddr:
+    socket.setSockOpt(OptReuseAddr, true)
+  if server.reusePort:
+    socket.setSockOpt(OptReusePort, true)
+  socket.bindAddr(port, address)
+  socket.listen()
+  serve(server, socket)
+
+proc serveUnix*(server: AsyncFCGIServer; path: string): Future[void] =
+  ## Starts the process of listening for incoming UNIX connections.
+  var socket = newAsyncSocket(
+      domain = AF_UNIX,
+      sockType = SOCK_STREAM,
+      protocol = cast[Protocol](0),
+    )
+  bindUnix(socket, path)
+  socket.listen()
+  serve(server, socket)
 
 proc close*(server: AsyncFCGIServer) =
   ## Terminates the async http server instance.
