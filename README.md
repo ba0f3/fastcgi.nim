@@ -13,7 +13,7 @@ nimble  install fastcgi
 Usage
 -----
 
-### FastCGI Server
+#### FastCGI Server
 ```nim
 import fastcgi/server, asyncdispatch
 
@@ -28,7 +28,7 @@ s.addHandler("/fcgi/simple", new SimpleHandler)
 waitFor s.serve(Port(9000))
 ```
 
-### FastCGI Client
+#### FastCGI Client
 ```nim
 import fastcgi/client
 
