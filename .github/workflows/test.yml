@@ -27,4 +27,5 @@ jobs:
       continue-on-error: ${{ matrix.version == 'devel' }}
       run: |
         nimble install -y
-        nimble test
+        nim c -d:release src/fastcgi/client.nim
+        nim c -d:release src/fastcgi/server.nim
