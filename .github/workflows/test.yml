@@ -1,0 +1,30 @@
+on:
+  pull_request:
+  push:
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        version:
+          - binary:stable
+          - devel
+          - 1.4.0
+          - 1.2.8
+          - 1.0.10
+          - binary:1.6.0
+        os:
+          - ubuntu-latest
+          - macOS-13
+          - windows-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: iffy/install-nim@v5
+      with:
+        version: ${{ matrix.version }}
+    - name: Test
+      continue-on-error: ${{ matrix.version == 'devel' }}
+      run: |
+        nimble install -y
+        nimble test
