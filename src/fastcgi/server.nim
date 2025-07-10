@@ -272,7 +272,7 @@ proc serveUnix*(server: AsyncFCGIServer; path: string): Future[void] =
   var socket = newAsyncSocket(
       domain = AF_UNIX,
       sockType = SOCK_STREAM,
-      protocol = cast[Protocol](0),
+      protocol = IPPROTO_IP,
     )
   bindUnix(socket, path)
   socket.listen()
