@@ -143,13 +143,16 @@ proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus:
   if content.len > 0:
     payload.add(&"\c\L{content}")
 
+  # Send STDOUT record with content
   var header = initHeader(FCGI_STDOUT, req.id, payload.len, 0)
   await req.client.send(addr header, FCGI_HEADER_LENGTH)
   if payload.len > 0:
     await req.client.send(payload.cstring, payload.len)
-    header.contentLengthB1 = 0
-    header.contentLengthB0 = 0
-    await req.client.send(addr header, FCGI_HEADER_LENGTH)
+  
+  # Send empty STDOUT record to signal end of output
+  header.contentLengthB1 = 0
+  header.contentLengthB0 = 0
+  await req.client.send(addr header, FCGI_HEADER_LENGTH)
 
   await req.sendEnd()
 
